@@ -1,0 +1,100 @@
+import csv
+import numpy as np
+
+def get_performance(upper_bound, lower_bound, num_of_bidders, file_name, num_times_running):
+    # upper_bound, lower_bound: the bounds of the bidding prices
+    # num_of_bidders: the number of homogeneous random bidding agents
+    # file_name: the file name of dataset (not including the .csv extension
+    # in file, index 0 is click, index 21 is pay_price
+    click_number = np.zeros(num_of_bidders)
+    winning_times = np.zeros(num_of_bidders)
+    payment = np.zeros(num_of_bidders)
+    with open('data/' + file_name + '.csv') as data_file:
+        data_array = csv.reader(data_file)
+        first_row = 1
+        for row in data_array:
+            if first_row:
+                first_row = 0  # skip the first row
+            else:
+                bid_prices = lower_bound + 0.00001 + np.random.rand(num_times_running, num_of_bidders) * (upper_bound - lower_bound - 0.00001)  # generate random prices between the bounds
+                bid_prices[:,payment > 6250] = np.random.rand() * 0.00001  # if the payment excess the budget, that agent not allowed to bid
+                bid_rank = np.argsort(np.argsort(bid_prices, 1), 1)
+                winner_candidate = np.where(bid_rank == (num_of_bidders - 1))[1]  # The winner candidate of each times running
+                winner_price = bid_prices[bid_rank == num_of_bidders - 1]  # The winner price of each times running
+                second_price = bid_prices[bid_rank == num_of_bidders - 2]  # The second price of each times running
+                pay_price = float(row[21]) / 1000
+                criteria = np.max(np.array([second_price, [pay_price] * num_times_running]), 0)
+                win_or_not = (winner_price > criteria)  # whether the winner candidate of each time win
+                winners = winner_candidate[win_or_not]  # real winners
+                paywin = criteria[win_or_not]  # Their corresponding paying
+                for w in range(winners.shape[0]):
+                    winning_times[winners[w]] = winning_times[winners[w]] + 1 / float(num_times_running)
+                    click_number[winners[w]] = click_number[winners[w]] + float(row[0]) / float(num_times_running)
+                    payment[winners[w]] = payment[winners[w]] + paywin[w] / float(num_times_running)
+                #winning_times[winners] += 1.0 / float(num_times_running)
+                #click_number[winners] += float(row[0]) / float(num_times_running)
+                #payment += win_or_not * np.max(np.array([second_price, [pay_price] * num_times_running]), 0) / float(num_times_running)
+    return [click_number, click_number/winning_times, payment, 1000 * payment / winning_times, payment / click_number]  # clicks, click-through rate, spend, average CPM
+
+def try_different_bounds_multi(upper_bounds_set, lower_bounds_set, num_of_bidders, file_name, num_times_running):
+    # upper_bounds_set, lower_bounds_set: the bounds candidate
+    # num_of_bidders: the number of homogeneous random bidding agents
+    # file_name: the file name of dataset (not including the .csv extension
+    # in file, index 0 is click, index 21 is pay_price
+    # num_times_running: the number of running random numbers
+    resultclick = np.zeros((len(upper_bounds_set), len(lower_bounds_set)))
+    resultCTR = np.zeros((len(upper_bounds_set), len(lower_bounds_set)))
+    resultPay = np.zeros((len(upper_bounds_set), len(lower_bounds_set)))
+    resultCPM = np.zeros((len(upper_bounds_set), len(lower_bounds_set)))
+    resultCPC = np.zeros((len(upper_bounds_set), len(lower_bounds_set)))
+    tasks = len(upper_bounds_set) * len(lower_bounds_set)
+    count = 0
+    for eleu in range(len(upper_bounds_set)):
+        for elel in range(len(lower_bounds_set)):
+            temp = get_performance(upper_bounds_set[eleu], lower_bounds_set[elel], num_of_bidders, file_name, num_times_running)
+            resultclick[eleu, elel] = temp[0].mean()
+            resultCTR[eleu, elel] = temp[1].mean()
+            resultPay[eleu, elel] = temp[2].mean()
+            resultCPM[eleu, elel] = temp[3].mean()
+            temp[4][np.isinf(temp[4])] = np.nan
+            resultCPC[eleu, elel] = np.nanmean(temp[4])
+            count = count + 1
+            print('bounds: ' + str(count) + '/' + str(tasks) + ' finished')
+    best_array = (resultclick == resultclick.max())
+    if best_array.sum() > 1:  # If more than one chose have same results
+        best_result = resultCTR[best_array].max()
+        best_array = (resultCTR == best_result)
+    if best_array.sum() > 1:
+        best_result = resultPay[best_array].min()
+        best_array = (resultPay == best_result)
+    if best_array.sum() > 1:
+        best_result = resultCPM[best_array].min()
+        best_array = (resultCPM == best_result)
+    if best_array.sum() > 1:
+        best_result = resultCPC[best_array].min()
+        best_array = (resultCPC == best_result)
+    # still same then only choose the first pair
+    indexu = np.where(best_array)[0][0]
+    indexl = np.where(best_array)[1][0]
+    return [upper_bounds_set[indexu], lower_bounds_set[indexl], resultclick[indexu, indexl], resultCTR[indexu, indexl], resultPay[indexu, indexl], resultCPM[indexu, indexl], resultCPC[indexu, indexl]]
+
+def try_different_bidder_num(upper_bounds_set, lower_bounds_set, num_of_bidders_set, file_name, num_times_running):
+    # num_of_bidders_set: the n candidate
+    results = np.zeros((len(num_of_bidders_set), 7))
+    tasks = len(num_of_bidders_set)
+    count = 0
+    for ele in range(len(num_of_bidders_set)):
+        curr_res = try_different_bounds_multi(upper_bounds_set, lower_bounds_set, num_of_bidders_set[ele], file_name, num_times_running)
+        results[ele, 0] = curr_res[0]
+        results[ele, 1] = curr_res[1]
+        results[ele, 2] = curr_res[2]
+        results[ele, 3] = curr_res[3]
+        results[ele, 4] = curr_res[4]
+        results[ele, 5] = curr_res[5]
+        results[ele, 6] = curr_res[6]
+        count += 1
+        print('bidder: ' + str(count) + '/' + str(tasks) + ' finished')
+    return results
+    
+list_result = try_different_bidder_num([0.234],[0.294],[100],'validation',5)
+print(list_result)
