@@ -1,0 +1,57 @@
+import numpy as np
+import pandas as pd
+
+theta_ctr_validation = np.loadtxt('validation_ctr.csv', float)
+validation_for_bidding_test = pd.read_csv('validation_bid.csv', sep=' ', header=None)
+validation_for_bidding_test.columns = ['click', 'payprice']
+budget = 6250000
+#original_bidding_price = np.loadtxt('validation_bidding_price2.csv')
+original_bidding_price = np.array(pd.read_csv('validation_82.csv')['bidprice'])
+numberofagents = 5
+threshold = 0.02
+increase_sp = 1.1
+decrease_sp = 1.00005
+noise = 50
+
+
+def multi_agent_strategy_adaptive(pCTR, click_payprice, budget, original_bidding_price, num_of_agents, increase_bid_threshold, increase_bid_speed, decrease_bid_speed, noise_level):
+    # pCTR: the predicted CTR data
+    # click_payprice: the data about the pay_price and whether a click is got
+    # budget: the budget constraint
+    # original_bidding_price: the bidding price got with the original bidding strategy
+    # num_of_agents: The overall number of agents including myself. Note that the first agent is regarded as myself and is the agent using adaptive bidding strategy
+    # increase_bid_threshold: This number is between 0 and 1. If pCTR > this threshold and an impression is not obtained, increase bid
+    # increase_bid_speed: >1. A multiplier of bid. if impression is obtained when should, bid prices from now on are all multiplied by this speed.
+    # decrease_bid_speed: >1. For every Chinese fen spent till now, the bid prices from now on are all divided by decrease_bid_speed.
+    # noise_level: Gaussian noise standard deviation
+    total_spend = np.zeros(num_of_agents)  # amount of money that each agent earns
+    total_click = np.zeros(num_of_agents)  # number of clicks that each agent gets
+    total_impressions = np.zeros(num_of_agents)  # number of impressions that each agent gets
+    current_log_multiplier = 0
+    for curr_transaction_index in range(pCTR.shape[0]):
+        price_bid = np.ones(num_of_agents) * original_bidding_price[curr_transaction_index]
+        price_bid[0] = price_bid[0] * np.exp(current_log_multiplier)  # my agent's bidding price
+        price_bid[1:] = price_bid[1:] + np.random.normal(0, noise_level, num_of_agents - 1)
+        price_bid[1:] = np.max(np.array([price_bid[1:], np.random.uniform(0.00001, 0.00002, num_of_agents - 1)]), axis=0)  # The other agent's bidding price, which is original strategy plus a little randomization. But not lower than 0
+        pay_price = click_payprice['payprice'][curr_transaction_index]  # The pay price in data
+        price_bid[total_spend > (budget - price_bid)] = np.random.uniform(0.00001, 0.00002, np.sum(total_spend > (budget - price_bid)))  # delete the bidding agents if its out of budget
+        sorted_bid = np.sort(price_bid)
+        largest_one = sorted_bid[-1]  # The largest bidding price
+        second_largest_one = sorted_bid[-2]  # The second largest bidding price
+        if largest_one > pay_price:
+            winner_index = np.where(price_bid == largest_one)[0][0]  # who wins
+            total_impressions[winner_index] = total_impressions[winner_index] + 1
+            total_spend[winner_index] = total_spend[winner_index] + np.max([pay_price, second_largest_one])
+            total_click[winner_index] = total_click[winner_index] + click_payprice['click'][curr_transaction_index]  # record the winning, spend and click
+            if winner_index != 0 and pCTR[curr_transaction_index] > increase_bid_threshold:  # should win but not
+                current_log_multiplier = current_log_multiplier + np.log(increase_bid_speed)
+            elif winner_index == 0:
+                current_log_multiplier = current_log_multiplier - np.max([pay_price, second_largest_one]) / 1000 * np.log(decrease_bid_speed)  # money spent
+        elif pCTR[curr_transaction_index] > increase_bid_threshold: # should win but not
+            current_log_multiplier = current_log_multiplier + np.log(increase_bid_speed)
+        if (curr_transaction_index % 1000 == 0):
+            print(str(curr_transaction_index + 1) + '/' + str(pCTR.shape[0]) + 'finished')
+    return [total_click[0], total_click[0]/total_impressions[0], total_spend[0], total_spend[0]/total_impressions[0]*1000, total_spend[0]/total_click[0]]
+
+results = multi_agent_strategy_adaptive(theta_ctr_validation, validation_for_bidding_test, budget, original_bidding_price, numberofagents, threshold, increase_sp, decrease_sp, noise)
+print(results)
