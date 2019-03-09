@@ -1,0 +1,150 @@
+import numpy as np
+import pandas as pd
+import seaborn as sb
+import sklearn
+import re
+import os
+
+from pandas import Series, DataFrame
+from pylab import rcParams
+from sklearn import preprocessing
+from sklearn.linear_model import LogisticRegression
+# from sklearn.cross_validation import train_test_split
+from sklearn import metrics
+from sklearn.metrics import classification_report
+
+def get_cumulative_sum(array):
+    return np.cumsum(array)
+
+# The following code is for non-linear bidding strategy
+def bid_non_linear_1(theta, c, lambda_c):
+    # theta: the predicted CTR
+    # c, lambda_c: hyperparameters of bid functions
+    return np.sqrt((c * theta / lambda_c) + (c ** 2)) - c
+
+def bid_non_linear_2(theta, c, lambda_c):
+    # theta: the predicted CTR
+    # c, lambda_c: hyperparameters of bid functions
+    part1 = (theta + np.sqrt((c ** 2) * (lambda_c ** 2) + (theta ** 2))) / (c * lambda_c)
+    part2 = (c * lambda_c) / (theta + np.sqrt((c ** 2) * (lambda_c ** 2) + (theta ** 2)))
+    return c * (part1 ** (1/3) - part2 ** (1/3))
+
+def try_different_c_lambda_1(c_group, lambda_group, theta, data_for_winning_payment, budget=0):
+    # theta_function is just the trained logistic regression model from sklearn
+    # data_for_theta here means the data for predicting theta (CTR)
+    # data_for_winning_payment here means the data for checking whether I win and pay money and get click
+    results = []
+    for cc in c_group:
+        for ll in lambda_group:
+            bid_data = bid_non_linear_1(theta, cc, ll)  # predict the bid for each transaction
+            win_whether = (bid_data > (data_for_winning_payment['payprice']))  # get whether win on each
+            click_whether = np.logical_and(win_whether, data_for_winning_payment['click']) # condition of click is winning
+            payment_amount = data_for_winning_payment['payprice'] * win_whether # pay if win
+            if budget != 0:
+                total_amount = get_cumulative_sum(payment_amount)
+                click_whether[total_amount > budget] = 0
+                win_whether[total_amount > budget] = 0
+                payment_amount[total_amount > budget] = 0
+            click_count = np.sum(click_whether)
+            CTR = click_count / np.sum(win_whether)
+            spend = np.sum(payment_amount)
+            CPM = spend / np.sum(win_whether) * 1000
+            CPC = spend / click_count
+            results.append([cc, ll, click_count, CTR, spend, CPM, CPC])
+    results = np.array(results)
+    # Now try to find the best results
+    best_click_count = np.max(results[:, 2])
+    curr_best_results = results[results[:, 2] == best_click_count, :]
+    if curr_best_results.shape[0] > 1 and len(curr_best_results.shape) > 1: # make sure that there is only one result
+        best_CTR = np.max(curr_best_results[:, 3])
+        curr_best_results = results[results[:, 3] == best_CTR, :]
+    if curr_best_results.shape[0] > 1 and len(curr_best_results.shape) > 1:
+        best_spend = np.min(curr_best_results[:, 4])
+        curr_best_results = results[results[:, 4] == best_spend, :]
+    if curr_best_results.shape[0] > 1 and len(curr_best_results.shape) > 1:
+        best_spend = np.min(curr_best_results[:, 5])
+        curr_best_results = results[results[:, 5] == best_spend, :]
+    if curr_best_results.shape[0] > 1 and len(curr_best_results.shape) > 1:
+        best_spend = np.min(curr_best_results[:, 6])
+        curr_best_results = results[results[:, 6] == best_spend, :]
+    if curr_best_results.shape[0] > 1 and len(curr_best_results.shape) > 1:
+        curr_best_results = results[0, :]
+    return curr_best_results
+
+def try_different_c_lambda_2(c_group, lambda_group, theta, data_for_winning_payment, budget=0):
+    # theta_function is just the trained logistic regression model from sklearn
+    # data_for_theta here means the data for predicting theta (CTR)
+    # data_for_winning_payment here means the data for checking whether I win and pay money and get click
+    results = []
+    for cc in c_group:
+        for ll in lambda_group:
+            bid_data = bid_non_linear_2(theta, cc, ll)  # predict the bid for each transaction
+            win_whether = (bid_data > (data_for_winning_payment['payprice']))  # get whether win on each
+            click_whether = np.logical_and(win_whether, data_for_winning_payment['click']) # condition of click is winning
+            payment_amount = data_for_winning_payment['payprice'] * win_whether # pay if win
+            if budget != 0:
+                total_amount = get_cumulative_sum(payment_amount)
+                click_whether[total_amount > budget] = 0
+                win_whether[total_amount > budget] = 0
+                payment_amount[total_amount > budget] = 0
+            click_count = np.sum(click_whether)
+            CTR = click_count / np.sum(win_whether)
+            spend = np.sum(payment_amount)
+            CPM = spend / np.sum(win_whether) * 1000
+            CPC = spend / click_count
+            results.append([cc, ll, click_count, CTR, spend, CPM, CPC])
+    results = np.array(results)
+    # Now try to find the best results
+    best_click_count = np.max(results[:, 2])
+    curr_best_results = results[results[:, 2] == best_click_count, :]
+    if curr_best_results.shape[0] > 1 and len(curr_best_results.shape) > 1: # make sure that there is only one result
+        best_CTR = np.max(curr_best_results[:, 3])
+        curr_best_results = results[results[:, 3] == best_CTR, :]
+    if curr_best_results.shape[0] > 1 and len(curr_best_results.shape) > 1:
+        best_spend = np.min(curr_best_results[:, 4])
+        curr_best_results = results[results[:, 4] == best_spend, :]
+    if curr_best_results.shape[0] > 1 and len(curr_best_results.shape) > 1:
+        best_spend = np.min(curr_best_results[:, 5])
+        curr_best_results = results[results[:, 5] == best_spend, :]
+    if curr_best_results.shape[0] > 1 and len(curr_best_results.shape) > 1:
+        best_spend = np.min(curr_best_results[:, 6])
+        curr_best_results = results[results[:, 6] == best_spend, :]
+    if curr_best_results.shape[0] > 1 and len(curr_best_results.shape) > 1:
+        curr_best_results = results[0, :]
+    return curr_best_results
+
+
+c_group_1 = [5,10,15,50,80,100,150,200,250,300]
+c_group_2 = [10,15,20,50,80,81,82,83,84,85,86,90,100,130,135,140,180,220,250,280,300]
+lambda_g = [1e-8, 5 * 1e-8, 1e-7, 5 * 1e-7, 1e-6, 5*1e-6, 1e-5, 5*1e-5, 1e-4, 5*1e-4,1e-3,5*1e-3,1e-2,5*1e-2]
+
+theta_ctr_train = np.loadtxt('train_ctr.csv', float)
+train_for_bidding_test = pd.read_csv('train_bid.csv', sep=' ', header=None)
+train_for_bidding_test.columns = ['click', 'payprice']
+theta_ctr_validation = np.loadtxt('validation_ctr.csv', float)
+validation_for_bidding_test = pd.read_csv('validation_bid.csv', sep=' ', header=None)
+validation_for_bidding_test.columns = ['click', 'payprice']
+
+theta_ctr_test = np.loadtxt('test_ctr.csv',float)
+bid_id = np.array(pd.read_csv('data/Group_xx.csv')['bidid']).reshape((-1,1))
+
+best_results1_valid = try_different_c_lambda_1(c_group_1, lambda_g, theta_ctr_validation, validation_for_bidding_test, 6250000)
+c = [best_results1_valid[0,0]]
+l = [best_results1_valid[0,1]]
+best_results1_valid = try_different_c_lambda_1(c, l, theta_ctr_validation, validation_for_bidding_test)
+bid_test_1 = bid_non_linear_1(theta_ctr_test, c[0], l[0]).reshape((-1,1)) * 1000
+testing_bidding_p_1 = pd.DataFrame(np.concatenate([bid_id, bid_test_1], axis=1), columns=['bidid','bidprice'])
+testing_bidding_p_1.to_csv('testing_bidding_price1.csv')
+bid_validation_1 = bid_non_linear_1(theta_ctr_validation, c[0], l[0]).reshape((-1,1))
+np.savetxt("validation_bidding_price1.csv", bid_validation_1)
+
+
+best_results2_valid = try_different_c_lambda_2(c_group_2, lambda_g, theta_ctr_validation, validation_for_bidding_test, 6250000)
+c = [best_results2_valid[0,0]]
+l = [best_results2_valid[0,1]]
+best_results2_valid = try_different_c_lambda_2(c, l, theta_ctr_validation, validation_for_bidding_test)
+bid_test_2 = bid_non_linear_2(theta_ctr_test, c[0], l[0]).reshape((-1,1)) * 1000
+testing_bidding_p_2 = pd.DataFrame(np.concatenate([bid_id, bid_test_2], axis=1), columns=['bidid','bidprice'])
+testing_bidding_p_2.to_csv('testing_bidding_price2.csv')
+bid_validation_2 = bid_non_linear_2(theta_ctr_validation, c[0], l[0]).reshape((-1,1))
+np.savetxt("validation_bidding_price2.csv", bid_validation_2)
