@@ -1,0 +1,151 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Feb 28 21:51:54 2019
+
+@author: 白开心
+"""
+#%%
+import numpy as np
+import pandas as pd
+import seaborn as sb
+import sklearn
+import re
+import os
+
+from pandas import Series, DataFrame
+from pylab import rcParams
+from sklearn import preprocessing
+from sklearn.linear_model import LogisticRegression
+# from sklearn.cross_validation import train_test_split
+from sklearn import metrics 
+from sklearn.metrics import classification_report
+
+#%matplotlib inline
+rcParams['figure.figsize'] = 10, 8
+sb.set_style('whitegrid')
+#%%
+train_file = pd.read_csv('data/train.csv') # train.csv
+#%% negative down sampling
+def neg_sampling (df, w):
+    df_click = df[df['click'] == 1]
+    df_noclick = df[df['click'] == 0]
+    df_noclick_sample = df_noclick.sample(frac = w, axis = 0)  # random_state = int
+    df_sample = df_click.append(df_noclick_sample).reset_index(drop = True)
+    return df_sample
+frac = 0.15
+train = neg_sampling(train_file, frac)
+#get the training data for click and payment
+train_for_bidding_test = train.copy()
+train_for_bidding_test = train_for_bidding_test[['click', 'payprice']].astype(float)
+#%% drop irrelevant variables
+train = train.drop(['bidid','userid','IP','domain','url','urlid','slotid','bidprice','payprice','keypage'], 1)
+train_label = train['click']
+train = train.drop(['click'], 1)
+train.head()
+
+#%% check if target variable is binary
+train_label.value_counts()
+#%% check for missing values
+train.isnull().sum()
+#%% conver numerical data into categories
+sorted(train['slotwidth'].unique())
+bin = [-1,200,400,600,800,max(train['slotwidth'])]
+slotwidth = pd.cut(train['slotwidth'],bin)
+slotwidth = slotwidth.to_frame()
+
+sorted(train['slotheight'].unique())
+bin = [-1,100,200,300,400,500,max(train['slotwidth'])]
+slotheight = pd.cut(train['slotheight'],bin)
+slotheight = slotheight.to_frame()
+
+sorted(train['slotprice'].unique())
+bin = [-1,50,100,150,200,250,max(train['slotprice'])]
+slotprice = pd.cut(train['slotprice'],bin)
+slotprice = slotprice.to_frame()
+
+train = train.drop(['slotwidth','slotheight','slotprice'], 1)
+train = pd.concat([train,slotwidth,slotheight,slotprice],axis = 1)
+
+#%% clean 'usertag'
+usertag = train['usertag'].astype(str)
+for index in range(0,len(usertag)):
+    if usertag[index] != 'null':
+        usertag[index] = int(re.sub(',', '', usertag[index]))
+        if usertag[index] > 100000000000000000000:
+            usertag[index] = 'ut0'
+train = train.drop(['usertag'], 1)
+train = pd.concat([train,usertag],axis = 1)
+
+#%% convert numerical data into str
+num_cat = ['weekday','hour','region','city','adexchange','advertiser']
+for var in num_cat:
+    train[var] = train[var].apply(str)
+test = pd.read_csv('data/test.csv') # validation.csv
+test = test.drop(['bidid','userid','IP','domain','url','urlid','slotid','keypage'], 1)
+bin = [-1,200,400,600,800,max(test['slotwidth'])]
+slotwidth = pd.cut(test['slotwidth'],bin)
+slotwidth = slotwidth.to_frame()
+bin = [-1,100,200,300,400,500,max(test['slotwidth'])]
+slotheight = pd.cut(test['slotheight'],bin)
+slotheight = slotheight.to_frame()
+bin = [-1,50,100,150,200,250,max(test['slotprice'])]
+slotprice = pd.cut(test['slotprice'],bin)
+slotprice = slotprice.to_frame()
+test = test.drop(['slotwidth','slotheight','slotprice'], 1)
+test = pd.concat([test,slotwidth,slotheight,slotprice],axis = 1)
+
+usertag = test['usertag'].astype(str)
+for index in range(0,len(usertag)):
+    if usertag[index] != 'null':
+        usertag[index] = int(re.sub(',', '', usertag[index]))
+        if usertag[index] > 100000000000000000000:
+            usertag[index] = 'ut0'
+test = test.drop(['usertag'], 1)
+test = pd.concat([test,usertag],axis = 1)
+
+num_cat = ['weekday','hour','region','city','adexchange','advertiser']
+for var in num_cat:
+    test[var] = test[var].apply(str)
+#%% convert into one-hot, train LR model
+train_size = train.shape[0]
+train_test_together = pd.concat([train, test],axis=0)
+del train
+
+del test
+together_oh = pd.get_dummies(train_test_together, dummy_na=True)
+del train_test_together
+train_oh = np.array(together_oh)[:train_size, :]
+test_oh = np.array(together_oh)[train_size:, :]
+del together_oh
+del slotheight
+del slotprice
+del slotwidth
+del usertag
+LogReg = LogisticRegression()
+LogReg.fit(train_oh, train_label)
+
+
+#%%
+#pred_ctr_1 = LogReg.predict(validation_oh)
+#pred_ctr_2 = frac/(frac-1+1/(pred_ctr_1 + 1e-10))
+
+def bid_non_linear_1(theta, c, lambda_c):
+    # theta: the predicted CTR
+    # c, lambda_c: hyperparameters of bid functions
+    return np.sqrt((c * theta / lambda_c) + (c ** 2)) - c
+
+def bid_non_linear_2(theta, c, lambda_c):
+    # theta: the predicted CTR
+    # c, lambda_c: hyperparameters of bid functions
+    part1 = (theta + np.sqrt((c ** 2) * (lambda_c ** 2) + (theta ** 2))) / (c * lambda_c)
+    part2 = (c * lambda_c) / (theta + np.sqrt((c ** 2) * (lambda_c ** 2) + (theta ** 2)))
+    return c * (part1 ** (1/3) - part2 ** (1/3))
+
+
+
+theta_ctr_test = LogReg.predict_proba(test_oh)
+del test_oh
+theta_ctr_test = theta_ctr_test[:, 1]
+theta_ctr_test = frac/(frac-1+1/(theta_ctr_test))
+np.savetxt('test_ctr.csv', theta_ctr_test)
+del theta_ctr_test
